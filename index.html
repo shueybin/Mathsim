@@ -1,1 +1,838 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MathSim Academy - Interactive Labs</title>
+    
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" crossorigin></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.8.0/math.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+</head>
+<body>
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // Destructuring React hooks for internal clean references
+        const { useState, useEffect, useRef } = React;
+
+        // ── Design Tokens ────────────────────────────────────────────────────────────
+        const C = {
+          bg: "#060b14", surface: "#0d1b2a", border: "#1a3a5c",
+          cyan: "#00f5ff", amber: "#f59e0b", purple: "#a855f7",
+          green: "#22c55e", orange: "#ff6b35", text: "#e2f4ff", dim: "#7ba7c4",
+        };
+
+        const SIMS = [
+          { id:"probability", name:"Probability Lab",      desc:"Coins, dice & spinners — watch the Law of Large Numbers emerge.", color:C.cyan,   icon:"⚄" },
+          { id:"geometry",    name:"3D Geometry Studio",   desc:"Rotate shapes, adjust dimensions, compute volume & surface area.", color:C.orange, icon:"◆" },
+          { id:"functions",   name:"Function Grapher",     desc:"Plot any f(x) expression and visualise the derivative curve.",   color:C.purple, icon:"∿" },
+          { id:"statistics",  name:"Statistics Lab",       desc:"Input data and explore mean, median, std-dev and quartiles.",    color:C.green,  icon:"▦" },
+          { id:"calculus",    name:"Calculus Explorer",    desc:"Visual derivatives (tangent lines) and Riemann integral sums.", color:C.amber,  icon:"∫" },
+        ];
+
+        // ── Shared small components ───────────────────────────────────────────────────
+        const Stat = ({ label, value, color }) => (
+          <div>
+            <div style={{ fontSize:11, color:C.dim, fontFamily:"monospace", marginBottom:2 }}>{label}</div>
+            <div style={{ fontSize:20, color, fontFamily:"monospace", fontWeight:"bold" }}>{value}</div>
+          </div>
+        );
+
+        const Tag = ({ active, color, children, onClick }) => (
+          <button onClick={onClick} style={{
+            padding:"7px 16px", cursor:"pointer", fontFamily:"monospace", fontSize:13,
+            border:`1px solid ${active ? color : C.border}`,
+            background: active ? color+"22" : "transparent",
+            color: active ? color : C.dim,
+            borderRadius:6, transition:"all .2s",
+          }}>{children}</button>
+        );
+
+        const Btn = ({ color="#00f5ff", outline, children, onClick, style }) => (
+          <button onClick={onClick} style={{
+            padding:"8px 18px", cursor:"pointer", fontFamily:"monospace", fontSize:13,
+            border:`1px solid ${color}`, borderRadius:6,
+            background: outline ? "transparent" : color+"22",
+            color, transition:"all .2s", ...style,
+          }}>{children}</button>
+        );
+
+        // ── Three.js background hook ──────────────────────────────────────────────────
+        function useThreeBG(ref) {
+          useEffect(() => {
+            const canvas = ref.current; if (!canvas) return;
+            const W = window.innerWidth, H = window.innerHeight;
+            const scene = new THREE.Scene();
+            const cam = new THREE.PerspectiveCamera(60, W/H, 0.1, 100);
+            cam.position.z = 10;
+            const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true });
+            renderer.setSize(W, H);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setClearColor(0x000000, 0);
+
+            const grid = new THREE.GridHelper(50, 50, 0x0d2137, 0x091520);
+            grid.position.y = -7;
+            scene.add(grid);
+
+            const GEOS = [
+              new THREE.IcosahedronGeometry(1, 0),
+              new THREE.OctahedronGeometry(0.9, 0),
+              new THREE.TetrahedronGeometry(0.9, 0),
+              new THREE.TorusGeometry(0.6, 0.25, 6, 10),
+              new THREE.BoxGeometry(1.2, 1.2, 1.2),
+            ];
+            const COLS = [0x00f5ff, 0xff6b35, 0xa855f7, 0x22c55e, 0xf59e0b];
+            const floaters = [];
+            for (let i = 0; i < 20; i++) {
+              const geo = GEOS[i % 5];
+              const mat = new THREE.MeshBasicMaterial({
+                color: COLS[i % 5], wireframe:true, transparent:true,
+                opacity: 0.12 + Math.random() * 0.14,
+              });
+              const m = new THREE.Mesh(geo, mat);
+              const r = 9 + Math.random() * 7, a = (i/20)*Math.PI*2;
+              m.position.set(Math.cos(a)*r + (Math.random()-.5)*3, (Math.random()-.5)*8, Math.sin(a)*r*0.4-10);
+              m.rotation.set(Math.random()*Math.PI*2, Math.random()*Math.PI*2, 0);
+              floaters.push({ m, spd: 0.003+Math.random()*.007, ph: Math.random()*Math.PI*2 });
+              scene.add(m);
+            }
+
+            // Particles
+            const N = 700, pos = new Float32Array(N*3);
+            for (let i=0;i<N;i++){pos[i*3]=(Math.random()-.5)*50;pos[i*3+1]=(Math.random()-.5)*25;pos[i*3+2]=(Math.random()-.5)*25-12;}
+            const pg = new THREE.BufferGeometry();
+            pg.setAttribute("position", new THREE.BufferAttribute(pos,3));
+            scene.add(new THREE.Points(pg, new THREE.PointsMaterial({ color:0x00f5ff, size:.05, transparent:true, opacity:.35 })));
+
+            let id, t=0;
+            const tick = () => {
+              id = requestAnimationFrame(tick); t += .008;
+              floaters.forEach(({m,spd,ph})=>{ m.rotation.x+=spd; m.rotation.y+=spd*1.3; m.position.y+=Math.sin(t+ph)*.002; });
+              renderer.render(scene,cam);
+            };
+            tick();
+            const resize = () => {
+              const w=window.innerWidth, h=window.innerHeight; cam.aspect=w/h; cam.updateProjectionMatrix(); renderer.setSize(w,h);
+            };
+            window.addEventListener("resize",resize);
+            return () => { cancelAnimationFrame(id); window.removeEventListener("resize",resize); renderer.dispose(); };
+          }, [ref]);
+        }
+
+        // ── SIM 1 ── Probability Lab
+        function ProbabilityLab() {
+          const [mode, setMode] = useState("coin");
+          const [results, setResults] = useState([]);
+          const cRef = useRef(null);
+
+          const outcomes = mode==="coin"?[0,1]:mode==="dice"?[1,2,3,4,5,6]:[1,2,3,4];
+          const labels   = mode==="coin"?["H","T"]:outcomes.map(String);
+
+          const roll = (n=1) => {
+            const arr=[];
+            for(let i=0;i<n;i++) arr.push(outcomes[Math.floor(Math.random()*outcomes.length)]);
+            setResults(p=>[...p,...arr].slice(-1000));
+          };
+
+          useEffect(()=>{
+            const cv=cRef.current; if(!cv||!results.length) return;
+            const ctx=cv.getContext("2d"), W=cv.width, H=cv.height;
+            ctx.clearRect(0,0,W,H);
+            const counts={}; outcomes.forEach(o=>counts[o]=0); results.forEach(r=>counts[r]++);
+            const maxC=Math.max(...Object.values(counts))||1;
+            const bw=(W-80)/outcomes.length, th=1/outcomes.length;
+            const ACCENT=["#00f5ff","#ff6b35","#a855f7","#22c55e","#f59e0b","#ec4899"];
+            outcomes.forEach((o,i)=>{
+              const x=40+i*bw, bh=(counts[o]/maxC)*(H-80);
+              const expH=th*(H-80)*(results.length/(maxC||1));
+              ctx.fillStyle=ACCENT[i%6]+"33"; ctx.strokeStyle=ACCENT[i%6]; ctx.lineWidth=2;
+              ctx.fillRect(x+4,H-40-bh,bw-8,bh); ctx.strokeRect(x+4,H-40-bh,bw-8,bh);
+              // theoretical line
+              ctx.strokeStyle="#ffffff55"; ctx.setLineDash([5,4]);
+              ctx.beginPath(); ctx.moveTo(x+4,H-40-expH); ctx.lineTo(x+bw-4,H-40-expH); ctx.stroke();
+              ctx.setLineDash([]);
+              // labels
+              ctx.fillStyle=C.dim; ctx.font="13px monospace"; ctx.textAlign="center";
+              ctx.fillText(labels[i], x+bw/2, H-22);
+              ctx.fillStyle=C.text; ctx.font="12px monospace";
+              ctx.fillText(counts[o], x+bw/2, H-46-bh);
+              ctx.fillStyle=C.dim; ctx.font="10px monospace";
+              const pct=results.length?((counts[o]/results.length)*100).toFixed(1):"0.0";
+              ctx.fillText(pct+"%", x+bw/2, H-46-bh-14);
+            });
+          },[results,mode]);
+
+          return (
+            <div style={{ padding:24, display:"flex", flexDirection:"column", gap:16, height:"100%" }}>
+              <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
+                {["coin","dice","spinner"].map(m=>(
+                  <Tag key={m} active={mode===m} color={C.cyan} onClick={()=>{setMode(m);setResults([]);}}>
+                    {m==="coin"?"🪙 Coin":m==="dice"?"🎲 Dice":"🎡 Spinner"}
+                  </Tag>
+                ))}
+                <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
+                  <Btn color={C.cyan} onClick={()=>roll(1)}>Roll ×1</Btn>
+                  <Btn color={C.cyan} onClick={()=>roll(10)}>×10</Btn>
+                  <Btn color={C.cyan} onClick={()=>roll(100)}>×100</Btn>
+                  <Btn color={C.orange} outline onClick={()=>setResults([])}>Reset</Btn>
+                </div>
+              </div>
+
+              <div style={{ background:"#0a1628", border:`1px solid ${C.border}`, borderRadius:8, padding:"12px 20px", display:"flex", gap:28 }}>
+                <Stat label="Trials" value={results.length} color={C.cyan} />
+                <Stat label="Outcomes" value={outcomes.length} color={C.amber} />
+                <Stat label="P(each)" value={`1/${outcomes.length}`} color={C.purple} />
+                <Stat label="Expected" value="Uniform" color={C.green} />
+              </div>
+
+              <div style={{ flex:1, background:"#0a1628", border:`1px solid ${C.border}`, borderRadius:8, padding:8, position:"relative", minHeight:220 }}>
+                {!results.length && (
+                  <div style={{ position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",color:C.dim,fontFamily:"monospace" }}>
+                    Click Roll to begin — watch probability emerge
+                  </div>
+                )}
+                <canvas ref={cRef} width={700} height={280} style={{ width:"100%", height:"100%" }} />
+              </div>
+
+              <div style={{ fontSize:12, color:C.dim, fontFamily:"monospace", lineHeight:1.7 }}>
+                📌 Dashed lines = theoretical probability. As trials → ∞, experimental frequencies converge to theory (Law of Large Numbers).
+              </div>
+            </div>
+          );
+        }
+
+        // ── SIM 2 ── 3D Geometry Studio
+        function GeometryStudio() {
+          const cRef   = useRef(null);
+          const sRef   = useRef(null);  
+          const gRef   = useRef(null);  
+          const [shape,setShape] = useState("icosahedron");
+          const [dims, setDims]  = useState({ a:2, b:1.2 });
+
+          const SHAPES = ["cube","sphere","cylinder","cone","torus","icosahedron","tetrahedron","octahedron"];
+
+          const props = (()=>{
+            const {a,b}=dims;
+            const s = { cube:{V:a**3, SA:6*a**2}, sphere:{V:(4/3)*Math.PI*a**3, SA:4*Math.PI*a**2},
+              cylinder:{V:Math.PI*a**2*b, SA:2*Math.PI*a*(a+b)},
+              cone:{V:(1/3)*Math.PI*a**2*b, SA:Math.PI*a*(a+Math.sqrt(a**2+b**2))},
+              torus:{V:2*Math.PI**2*b**2*a, SA:4*Math.PI**2*a*b},
+              icosahedron:{V:(5/12)*(3+Math.sqrt(5))*a**3, SA:5*Math.sqrt(3)*a**2},
+              tetrahedron:{V:(a**3)/(6*Math.sqrt(2)), SA:Math.sqrt(3)*a**2},
+              octahedron:{V:(Math.sqrt(2)/3)*a**3, SA:2*Math.sqrt(3)*a**2},
+            }[shape] || {V:0,SA:0};
+            return { V:s.V.toFixed(3), SA:s.SA.toFixed(3) };
+          })();
+
+          useEffect(()=>{
+            const cv=cRef.current; if(!cv) return;
+            const scene=new THREE.Scene();
+            const cam=new THREE.PerspectiveCamera(50,600/380,0.1,100);
+            cam.position.set(4,3,6); cam.lookAt(0,0,0);
+            const renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true});
+            renderer.setSize(600,380); renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+            renderer.setClearColor(0x060b14);
+            scene.add(new THREE.AmbientLight(0xffffff,.35));
+            const d1=new THREE.DirectionalLight(0x00f5ff,2); d1.position.set(5,5,5); scene.add(d1);
+            const d2=new THREE.DirectionalLight(0xff6b35,.8); d2.position.set(-5,-2,-3); scene.add(d2);
+            scene.add(new THREE.GridHelper(12,12,0x1a3a5c,0x0d2137));
+            sRef.current={scene,cam,renderer};
+            return ()=>{ renderer.dispose(); };
+          },[]);
+
+          useEffect(()=>{
+            if(!sRef.current) return;
+            const {scene,renderer,cam}=sRef.current;
+            if(gRef.current) scene.remove(gRef.current);
+
+            const {a,b}=dims;
+            const geoMap = {
+              cube:        ()=>new THREE.BoxGeometry(a,a,a),
+              sphere:      ()=>new THREE.SphereGeometry(a,36,36),
+              cylinder:    ()=>new THREE.CylinderGeometry(a,a,b,36),
+              cone:        ()=>new THREE.ConeGeometry(a,b,36),
+              torus:       ()=>new THREE.TorusGeometry(a,Math.min(b,a*.9),16,64),
+              icosahedron: ()=>new THREE.IcosahedronGeometry(a,1),
+              tetrahedron: ()=>new THREE.TeddyhedronGeometry || (()=>new THREE.TetrahedronGeometry(a,0)), 
+              octahedron:  ()=>new THREE.OctahedronGeometry(a,0),
+            };
+            const geo=(geoMap[shape]||geoMap.cube)();
+            const solid=new THREE.Mesh(geo, new THREE.MeshPhongMaterial({color:0x0d2a4a,transparent:true,opacity:.65,shininess:80}));
+            const wire =new THREE.Mesh(geo.clone(), new THREE.MeshBasicMaterial({color:0x00f5ff,wireframe:true,transparent:true,opacity:.45}));
+            const group=new THREE.Group(); group.add(solid); group.add(wire);
+            scene.add(group); gRef.current=group;
+
+            let rafId, dragging=false, prev={x:0,y:0};
+            const cv=renderer.domElement;
+            const onDown=e=>{dragging=true;prev={x:e.clientX,y:e.clientY};};
+            const onUp=()=>dragging=false;
+            const onMove=e=>{
+              if(!dragging)return;
+              group.rotation.y+=(e.clientX-prev.x)*.012;
+              group.rotation.x+=(e.clientY-prev.y)*.012;
+              prev={x:e.clientX,y:e.clientY};
+            };
+            cv.addEventListener("mousedown",onDown);
+            window.addEventListener("mouseup",onUp);
+            window.addEventListener("mousemove",onMove);
+
+            const tick=()=>{ rafId=requestAnimationFrame(tick); if(!dragging)group.rotation.y+=.006; renderer.render(scene,cam); };
+            tick();
+            return ()=>{ cancelAnimationFrame(rafId); cv.removeEventListener("mousedown",onDown); window.removeEventListener("mouseup",onUp); window.removeEventListener("mousemove",onMove); };
+          },[shape,dims]);
+
+          const formulae = {
+            cube:`V = a³\nSA = 6a²`, sphere:`V = (4/3)πr³\nSA = 4πr²`,
+            cylinder:`V = πr²h\nSA = 2πr(r+h)`, cone:`V = (1/3)πr²h\nSA = πr(r+l)`,
+            torus:`V = 2π²Rr²\nSA = 4π²Rr`, icosahedron:`V ≈ 2.182a³\nSA = 5√3·a²`,
+            tetrahedron:`V = a³/6√2\nSA = √3·a²`, octahedron:`V = (√2/3)a³\nSA = 2√3·a²`,
+          };
+
+          return (
+            <div style={{ padding:24, display:"flex", gap:20, height:"100%", flexWrap:"wrap" }}>
+              <div style={{ flex:1, display:"flex", flexDirection:"column", gap:12, minWidth:300 }}>
+                <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
+                  {SHAPES.map(s=>(
+                    <Tag key={s} active={shape===s} color={C.orange} onClick={()=>setShape(s)}>
+                      {s.charAt(0).toUpperCase()+s.slice(1)}
+                    </Tag>
+                  ))}
+                </div>
+                <canvas ref={cRef} style={{ flex:1, borderRadius:10, border:`1px solid ${C.border}`, cursor:"grab", width:"100%", maxHeight:380 }} />
+                <div style={{ fontSize:11, color:C.dim, fontFamily:"monospace" }}>🖱 Drag inside view window to manually rotate</div>
+              </div>
+
+              <div style={{ width:230, display:"flex", flexDirection:"column", gap:14, flexGrow:1 }}>
+                <div style={{ background:"#0a1628", border:`1px solid ${C.border}`, borderRadius:8, padding:16 }}>
+                  <div style={{ fontSize:11, color:C.dim, fontFamily:"monospace", marginBottom:12, letterSpacing:1 }}>DIMENSIONS</div>
+                  {[["a","Radius / Edge",0.5,4],["b","Height / Tube",0.3,4]].map(([k,lbl,mn,mx])=>(
+                    <div key={k} style={{ marginBottom:14 }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                        <span style={{ color:C.text, fontFamily:"monospace", fontSize:13 }}>{lbl}</span>
+                        <span style={{ color:C.orange, fontFamily:"monospace", fontSize:13, fontWeight:"bold" }}>{dims[k].toFixed(1)}</span>
+                      </div>
+                      <input type="range" min={mn} max={mx} step=".1" value={dims[k]}
+                        onChange={e=>setDims(p=>({...p,[k]:parseFloat(e.target.value)}))}
+                        style={{ width:"100%", accentColor:C.orange }} />
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ background:"#0a1628", border:`1px solid ${C.orange}44`, borderRadius:8, padding:16 }}>
+                  <div style={{ fontSize:11, color:C.dim, fontFamily:"monospace", marginBottom:12, letterSpacing:1 }}>PROPERTIES</div>
+                  <div style={{ marginBottom:14 }}>
+                    <div style={{ fontSize:11, color:C.dim, fontFamily:"monospace" }}>Volume</div>
+                    <div style={{ fontSize:24, color:C.orange, fontFamily:"monospace", fontWeight:"bold" }}>{props.V}</div>
+                    <div style={{ fontSize:10, color:C.dim, fontFamily:"monospace" }}>cubic units</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize:11, color:C.dim, fontFamily:"monospace" }}>Surface Area</div>
+                    <div style={{ fontSize:24, color:C.cyan, fontFamily:"monospace", fontWeight:"bold" }}>{props.SA}</div>
+                    <div style={{ fontSize:10, color:C.dim, fontFamily:"monospace" }}>square units</div>
+                  </div>
+                </div>
+
+                <div style={{ background:"#0a1628", border:`1px solid ${C.border}`, borderRadius:8, padding:16 }}>
+                  <div style={{ fontSize:11, color:C.dim, fontFamily:"monospace", marginBottom:8, letterSpacing:1 }}>FORMULA</div>
+                  <pre style={{ color:C.text, fontFamily:"monospace", fontSize:12, margin:0, lineHeight:2, whiteSpace:"pre-wrap" }}>
+                    {formulae[shape]}
+                  </pre>
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        // ── SIM 3 ── Function Grapher
+        function FunctionGrapher() {
+          const [expr,setExpr]=useState("sin(x)");
+          const [showD,setShowD]=useState(false);
+          const [xMin,setXMin]=useState(-8);
+          const [xMax,setXMax]=useState(8);
+          const [err,setErr]=useState("");
+          const cRef=useRef(null);
+
+          const PRESETS=["sin(x)","cos(x)","x^2","x^3 - 3*x","sqrt(abs(x))","log(abs(x)+1)","exp(-x^2/2)","tan(x)"];
+
+          useEffect(()=>{
+            const cv=cRef.current; if(!cv) return;
+            const ctx=cv.getContext("2d"), W=cv.width, H=cv.height;
+            ctx.clearRect(0,0,W,H); ctx.fillStyle="#060b14"; ctx.fillRect(0,0,W,H);
+            const pd=44, pW=W-2*pd, pH=H-2*pd;
+            const N=500;
+
+            const pts=[];
+            for(let i=0;i<=N;i++){
+              const x=xMin+(i/N)*(xMax-xMin);
+              try{ const y=math.evaluate(expr,{x}); pts.push(typeof y==="number"&&isFinite(y)?{x,y}:null); }
+              catch{ pts.push(null); }
+            }
+            if(pts.every(p=>!p)){ setErr("Cannot evaluate expression"); return; }
+            setErr("");
+
+            const ys=pts.filter(Boolean).map(p=>p.y);
+            const yMn=Math.max(Math.min(...ys),-15), yMx=Math.min(Math.max(...ys),15), yR=yMx-yMn||1;
+
+            const tx=x=>pd+((x-xMin)/(xMax-xMin))*pW;
+            const ty=y=>pd+pH-((y-yMn)/yR)*pH;
+
+            // Grid
+            ctx.strokeStyle="#0d2137"; ctx.lineWidth=1;
+            for(let x=Math.ceil(xMin);x<=xMax;x++){ ctx.beginPath();ctx.moveTo(tx(x),pd);ctx.lineTo(tx(x),pd+pH);ctx.stroke(); }
+            for(let y=Math.ceil(yMn);y<=yMx;y++){ ctx.beginPath();ctx.moveTo(pd,ty(y));ctx.lineTo(pd+pW,ty(y));ctx.stroke(); }
+
+            // Axes
+            ctx.strokeStyle="#1a3a5c88"; ctx.lineWidth=1.5;
+            ctx.beginPath();ctx.moveTo(pd,ty(0));ctx.lineTo(pd+pW,ty(0));ctx.stroke();
+            ctx.beginPath();ctx.moveTo(tx(0),pd);ctx.lineTo(tx(0),pd+pH);ctx.stroke();
+
+            // Axis numbers
+            ctx.fillStyle="#1a3a5c"; ctx.font="10px monospace"; ctx.textAlign="center";
+            for(let x=Math.ceil(xMin);x<=xMax;x+=2) ctx.fillText(x,tx(x),H-8);
+            ctx.textAlign="right";
+            for(let y=Math.round(yMn);y<=yMx;y+=2) ctx.fillText(y,pd-5,ty(y)+3);
+
+            // f(x)
+            ctx.strokeStyle=C.purple; ctx.lineWidth=2.5; ctx.shadowColor=C.purple; ctx.shadowBlur=10;
+            ctx.beginPath(); let s=false;
+            for(const p of pts){ if(!p){s=false;continue;} if(!s){ctx.moveTo(tx(p.x),ty(p.y));s=true;}else ctx.lineTo(tx(p.x),ty(p.y)); }
+            ctx.stroke(); ctx.shadowBlur=0;
+
+            // f'(x)
+            if(showD){
+              ctx.strokeStyle=C.green; ctx.lineWidth=1.8; ctx.shadowColor=C.green; ctx.shadowBlur=6;
+              ctx.beginPath(); s=false;
+              const h2=0.001;
+              for(let i=0;i<=N;i++){
+                const x=xMin+(i/N)*(xMax-xMin);
+                try{
+                  const y1=math.evaluate(expr,{x:x+h2}), y2=math.evaluate(expr,{x:x-h2});
+                  const dy=(y1-y2)/(2*h2);
+                  if(isFinite(dy)&&Math.abs(dy)<25){ if(!s){ctx.moveTo(tx(x),ty(dy));s=true;}else ctx.lineTo(tx(x),ty(dy)); }
+                  else s=false;
+                }catch{s=false;}
+              }
+              ctx.stroke(); ctx.shadowBlur=0;
+            }
+
+            // Legend
+            ctx.font="13px monospace"; ctx.textAlign="left";
+            ctx.fillStyle=C.purple; ctx.fillText(`f(x) = ${expr}`, pd+8, pd+18);
+            if(showD){ ctx.fillStyle=C.green; ctx.fillText("f′(x)", pd+8, pd+36); }
+          },[expr,showD,xMin,xMax]);
+
+          return (
+            <div style={{ padding:24, display:"flex", flexDirection:"column", gap:14, height:"100%" }}>
+              <div style={{ display:"flex", gap:12, alignItems:"center", flexWrap:"wrap" }}>
+                <input value={expr} onChange={e=>{setExpr(e.target.value);setErr("");}}
+                  style={{ flex:1, minWidth:200, padding:"10px 16px", background:"#0a1628",
+                    border:`1px solid ${err?C.orange:C.border}`, borderRadius:6,
+                    color:C.text, fontFamily:"monospace", fontSize:16, outline:"none" }}
+                  placeholder="f(x) = ..." />
+                <label style={{ display:"flex", alignItems:"center", gap:8, color:C.dim, fontFamily:"monospace", fontSize:13, cursor:"pointer" }}>
+                  <input type="checkbox" checked={showD} onChange={e=>setShowD(e.target.checked)} style={{ accentColor:C.green }} />
+                  Show f′(x)
+                </label>
+              </div>
+
+              <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
+                {PRESETS.map(p=>(
+                  <Tag key={p} active={expr===p} color={C.purple} onClick={()=>{setExpr(p);setErr("");}}>
+                    {p}
+                  </Tag>
+                ))}
+              </div>
+
+              {err && <div style={{ color:C.orange, fontFamily:"monospace", fontSize:13 }}>⚠ {err}</div>}
+
+              <canvas ref={cRef} width={860} height={380}
+                style={{ width:"100%", height:"auto", borderRadius:10, border:`1px solid ${C.border}` }} />
+
+              <div style={{ display:"flex", gap:20, alignItems:"center", flexWrap:"wrap" }}>
+                <span style={{ color:C.dim, fontFamily:"monospace", fontSize:13 }}>x range window edges:</span>
+                <input type="range" min={-20} max={-1} value={xMin} onChange={e=>setXMin(+e.target.value)} style={{ accentColor:C.purple, width:100 }} />
+                <span style={{ color:C.text, fontFamily:"monospace", fontSize:13 }}>[{xMin}, {xMax}]</span>
+                <input type="range" min={1} max={20} value={xMax} onChange={e=>setXMax(+e.target.value)} style={{ accentColor:C.purple, width:100 }} />
+              </div>
+            </div>
+          );
+        }
+
+        // ── SIM 4 ── Statistics Lab
+        function StatisticsLab() {
+          const [input,setInput]=useState("5,8,12,3,7,9,15,6,10,4,8,11,14,2,9");
+          const cRef=useRef(null);
+
+          const data=input.split(",").map(s=>parseFloat(s.trim())).filter(n=>!isNaN(n));
+
+          const stats=(()=>{
+            if(!data.length) return null;
+            const s=[...data].sort((a,b)=>a-b), n=data.length;
+            const mean=data.reduce((a,b)=>a+b,0)/n;
+            const median=n%2===0?(s[n/2-1]+s[n/2])/2:s[Math.floor(n/2)];
+            const freq={}; data.forEach(d=>freq[d]=(freq[d]||0)+1);
+            const mxF=Math.max(...Object.values(freq));
+            const mode=Object.keys(freq).filter(k=>freq[k]===mxF).join(", ");
+            const variance=data.reduce((a,b)=>a+(b-mean)**2,0)/n;
+            const std=Math.sqrt(variance);
+            return { mean:mean.toFixed(2), median:median.toFixed(2), mode, std:std.toFixed(2),
+              variance:variance.toFixed(2), min:s[0], max:s[n-1],
+              q1:s[Math.floor(n*.25)] || s[0], q3:s[Math.floor(n*.75)] || s[n-1], n };
+          })();
+
+          useEffect(()=>{
+            const cv=cRef.current; if(!cv||!data.length) return;
+            const ctx=cv.getContext("2d"), W=cv.width, H=cv.height;
+            ctx.clearRect(0,0,W,H); ctx.fillStyle="#060b14"; ctx.fillRect(0,0,W,H);
+            const pd={t:20,r:20,b:40,l:50}, pW=W-pd.l-pd.r, pH=H-pd.t-pd.b;
+            const mx=Math.max(...data)||1, mn=Math.min(...data);
+            const bw=pW/data.length;
+
+            data.forEach((v,i)=>{
+              const bh=(v/mx)*pH, x=pd.l+i*bw, y=pd.t+pH-bh;
+              const hue=180+((v-mn)/(mx-mn||1))*60;
+              ctx.fillStyle=`hsla(${hue},75%,55%,.6)`; ctx.strokeStyle=`hsl(${hue},85%,70%)`; ctx.lineWidth=1;
+              ctx.fillRect(x+2,y,bw-4,bh); ctx.strokeRect(x+2,y,bw-4,bh);
+              ctx.fillStyle=C.dim; ctx.font="10px monospace"; ctx.textAlign="center";
+              ctx.fillText(v, x+bw/2, H-8);
+            });
+
+            if(stats){
+              const meanH=(parseFloat(stats.mean)/mx)*pH;
+              ctx.strokeStyle=C.cyan; ctx.lineWidth=2; ctx.setLineDash([6,4]);
+              ctx.beginPath(); ctx.moveTo(pd.l,pd.t+pH-meanH); ctx.lineTo(pd.l+pW,pd.t+pH-meanH); ctx.stroke();
+              ctx.setLineDash([]); ctx.fillStyle=C.cyan; ctx.font="11px monospace"; ctx.textAlign="right";
+              ctx.fillText(`μ = ${stats.mean}`, pd.l+pW-6, pd.t+pH-meanH-5);
+
+              const medH=(parseFloat(stats.median)/mx)*pH;
+              ctx.strokeStyle=C.purple; ctx.lineWidth=1.5; ctx.setLineDash([3,4]);
+              ctx.beginPath(); ctx.moveTo(pd.l,pd.t+pH-medH); ctx.lineTo(pd.l+pW,pd.t+pH-medH); ctx.stroke();
+              ctx.setLineDash([]); ctx.fillStyle=C.purple; ctx.textAlign="left";
+              ctx.fillText(`Med = ${stats.median}`, pd.l+6, pd.t+pH-medH-5);
+            }
+          },[data,stats,input]);
+
+          const STAT_ITEMS = stats ? [
+            {label:"Mean (μ)", value:stats.mean,    color:C.cyan},
+            {label:"Median",   value:stats.median,  color:C.purple},
+            {label:"Std Dev σ",value:stats.std,     color:C.amber},
+            {label:"Mode",     value:stats.mode,    color:C.green},
+            {label:"Variance", value:stats.variance,color:C.orange},
+            {label:"Range",    value:`${stats.min}–${stats.max}`,color:"#ec4899"},
+            {label:"Q1 / Q3",  value:`${stats.q1} / ${stats.q3}`,color:"#06b6d4"},
+            {label:"N",        value:stats.n,       color:C.dim},
+          ] : [];
+
+          return (
+            <div style={{ padding:24, display:"flex", flexDirection:"column", gap:14, height:"100%" }}>
+              <div>
+                <label style={{ color:C.dim, fontFamily:"monospace", fontSize:13, marginBottom:6, display:"block" }}>
+                  Data points (comma-separated integers/floats):
+                </label>
+                <input value={input} onChange={e=>setInput(e.target.value)}
+                  style={{ width:"100%", padding:"10px 16px", background:"#0a1628", border:`1px solid ${C.border}`,
+                    borderRadius:6, color:C.text, fontFamily:"monospace", fontSize:14, outline:"none", boxSizing:"border-box" }} />
+              </div>
+
+              {stats && (
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(160px, 1fr))", gap:10 }}>
+                  {STAT_ITEMS.map(({label,value,color})=>(
+                    <div key={label} style={{ background:"#0a1628", border:`1px solid ${color}33`, borderRadius:8, padding:"10px 14px" }}>
+                      <div style={{ fontSize:11, color:C.dim, fontFamily:"monospace", marginBottom:2 }}>{label}</div>
+                      <div style={{ fontSize:18, color, fontFamily:"monospace", fontWeight:"bold" }}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <canvas ref={cRef} width={860} height={260}
+                style={{ width:"100%", height:"auto", borderRadius:10, border:`1px solid ${C.border}` }} />
+
+              <div style={{ fontSize:12, color:C.dim, fontFamily:"monospace" }}>
+                — Cyan line = Mean (μ) &nbsp; — Purple line = Median
+              </div>
+            </div>
+          );
+        }
+
+        // ── SIM 5 ── Calculus Explorer
+        function CalculusExplorer() {
+          const [expr,setExpr]=useState("x^2");
+          const [mode,setMode]=useState("derivative");
+          const [xPos,setXPos]=useState(2);
+          const [intA,setIntA]=useState(-2);
+          const [intB,setIntB]=useState(3);
+          const [rects,setRects]=useState(12);
+          const cRef=useRef(null);
+
+          const PRESETS=["x^2","x^3","sin(x)","cos(x)","exp(-x^2/2)","x^2 - 4","abs(x)"];
+
+          useEffect(()=>{
+            const cv=cRef.current; if(!cv) return;
+            const ctx=cv.getContext("2d"), W=cv.width, H=cv.height;
+            ctx.clearRect(0,0,W,H); ctx.fillStyle="#060b14"; ctx.fillRect(0,0,W,H);
+            const xMn=-6.5, xMx=6.5, pd=50, pW=W-2*pd, pH=H-2*pd;
+            const N=500, h2=0.0001;
+
+            const ev=x => { try{const y=math.evaluate(expr,{x});return isFinite(y)?y:null;}catch{return null;} };
+
+            const ys=[]; for(let i=0;i<=N;i++){const v=ev(xMn+(i/N)*(xMx-xMn));if(v!==null)ys.push(v);}
+            if(!ys.length) return;
+            const yMn=Math.max(Math.min(...ys),-10), yMx=Math.min(Math.max(...ys),10), yR=yMx-yMn||1;
+
+            const tx=x=>pd+((x-xMn)/(xMx-xMn))*pW;
+            const ty=y=>pd+pH-((y-yMn)/yR)*pH;
+
+            // Grid
+            ctx.strokeStyle="#0d2137"; ctx.lineWidth=1;
+            for(let x=Math.ceil(xMn);x<=xMx;x++){ctx.beginPath();ctx.moveTo(tx(x),pd);ctx.lineTo(tx(x),pd+pH);ctx.stroke();}
+            for(let y=Math.ceil(yMn);y<=yMx;y++){ctx.beginPath();ctx.moveTo(pd,ty(y));ctx.lineTo(pd+pW,ty(y));ctx.stroke();}
+
+            // Axes
+            ctx.strokeStyle="#1a3a5c88"; ctx.lineWidth=1.5;
+            ctx.beginPath();ctx.moveTo(pd,ty(0));ctx.lineTo(pd+pW,ty(0));ctx.stroke();
+            ctx.beginPath();ctx.moveTo(tx(0),pd);ctx.lineTo(tx(0),pd+pH);ctx.stroke();
+            ctx.fillStyle="#1a3a5c"; ctx.font="10px monospace"; ctx.textAlign="center";
+            for(let x=Math.ceil(xMn);x<=xMx;x+=2) ctx.fillText(x,tx(x),H-10);
+
+            // Riemann rects
+            if(mode==="integral"){
+              const step=(intB-intA)/rects; let area=0;
+              for(let i=0;i<rects;i++){
+                const x0=intA+i*step, xm=x0+step/2, y0=ev(xm);
+                if(y0===null) continue;
+                area+=y0*step;
+                const rh=ty(0)-ty(y0), rx=tx(x0), rw=tx(x0+step)-tx(x0);
+                ctx.fillStyle=C.amber+"22"; ctx.strokeStyle=C.amber+"99"; ctx.lineWidth=1;
+                if(y0>=0){ctx.fillRect(rx,ty(y0),rw,rh);ctx.strokeRect(rx,ty(y0),rw,rh);}
+                else{ctx.fillRect(rx,ty(0),rw,-rh);ctx.strokeRect(rx,ty(0),rw,-rh);}
+              }
+              ctx.fillStyle=C.amber; ctx.font="bold 14px monospace"; ctx.textAlign="left";
+              ctx.fillText(`∫ f(x)dx ≈ ${area.toFixed(5)}`, pd+8, pd+22);
+            }
+
+            // Function curve
+            ctx.strokeStyle=C.purple; ctx.lineWidth=2.5; ctx.shadowColor=C.purple; ctx.shadowBlur=10;
+            ctx.beginPath(); let s=false;
+            for(let i=0;i<=N;i++){
+              const x=xMn+(i/N)*(xMx-xMn), y=ev(x);
+              if(y===null||y<yMn-1||y>yMx+1){s=false;continue;}
+              if(!s){ctx.moveTo(tx(x),ty(y));s=true;}else ctx.lineTo(tx(x),ty(y));
+            }
+            ctx.stroke(); ctx.shadowBlur=0;
+
+            // Derivative tangent line
+            if(mode==="derivative"){
+              const y0=ev(xPos), dy0=ev(xPos+h2), dy1=ev(xPos-h2);
+              if(y0!==null&&dy0!==null&&dy1!==null){
+                const slope=(dy0-dy1)/(2*h2);
+                ctx.strokeStyle=C.cyan; ctx.lineWidth=2; ctx.shadowColor=C.cyan; ctx.shadowBlur=10;
+                ctx.setLineDash([10,5]);
+                ctx.beginPath();
+                ctx.moveTo(tx(xMn), ty(y0+slope*(xMn-xPos)));
+                ctx.lineTo(tx(xMx), ty(y0+slope*(xMx-xPos)));
+                ctx.stroke(); ctx.setLineDash([]); ctx.shadowBlur=0;
+                ctx.fillStyle=C.cyan; ctx.shadowColor=C.cyan; ctx.shadowBlur=14;
+                ctx.beginPath(); ctx.arc(tx(xPos),ty(y0),7,0,Math.PI*2); ctx.fill();
+                ctx.shadowBlur=0;
+                ctx.fillStyle=C.cyan; ctx.font="bold 13px monospace"; ctx.textAlign="left";
+                ctx.fillText(`f(${xPos}) = ${y0.toFixed(3)}`, pd+8, pd+22);
+                ctx.fillText(`f′(${xPos}) = ${slope.toFixed(4)}`, pd+8, pd+40);
+              }
+            }
+          },[expr,mode,xPos,intA,intB,rects]);
+
+          return (
+            <div style={{ padding:24, display:"flex", flexDirection:"column", gap:14, height:"100%" }}>
+              <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
+                {["derivative","integral"].map(m=>(
+                  <Tag key={m} active={mode===m} color={C.amber} onClick={()=>setMode(m)}>
+                    {m==="derivative"?"f′(x) — Derivative":"∫ — Integral (Riemann)"}
+                  </Tag>
+                ))}
+                <input value={expr} onChange={e=>setExpr(e.target.value)}
+                  style={{ flex:1, minWidth:180, padding:"8px 14px", background:"#0a1628",
+                    border:`1px solid ${C.border}`, borderRadius:6, color:C.text,
+                    fontFamily:"monospace", fontSize:15, outline:"none" }}
+                  placeholder="f(x) = ..." />
+              </div>
+
+              <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
+                {PRESETS.map(p=>(
+                  <Tag key={p} active={expr===p} color={C.amber} onClick={()=>setExpr(p)}>{p}</Tag>
+                ))}
+              </div>
+
+              <canvas ref={cRef} width={860} height={340}
+                style={{ width:"100%", height:"auto", borderRadius:10, border:`1px solid ${C.border}` }} />
+
+              {mode==="derivative" && (
+                <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+                  <span style={{ color:C.dim, fontFamily:"monospace", fontSize:13, whiteSpace:"nowrap" }}>x =</span>
+                  <input type="range" min={-6} max={6} step={.1} value={xPos}
+                    onChange={e=>setXPos(parseFloat(e.target.value))} style={{ flex:1, accentColor:C.cyan }} />
+                  <span style={{ color:C.cyan, fontFamily:"monospace", fontWeight:"bold", width:40 }}>{xPos}</span>
+                </div>
+              )}
+
+              {mode==="integral" && (
+                <div style={{ display:"flex", gap:20, flexWrap:"wrap", alignItems:"center" }}>
+                  {[["a",intA,-6,0,setIntA],["b",intB,0,6,setIntB]].map(([l,v,mn,mx,set])=>(
+                    <div key={l} style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <span style={{ color:C.dim, fontFamily:"monospace", fontSize:13 }}>{l} =</span>
+                      <input type="range" min={mn} max={mx} step={.1} value={v}
+                        onChange={e=>set(parseFloat(e.target.value))} style={{ width:100, accentColor:C.amber }} />
+                      <span style={{ color:C.amber, fontFamily:"monospace", width:32 }}>{v}</span>
+                    </div>
+                  ))}
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <span style={{ color:C.dim, fontFamily:"monospace", fontSize:13 }}>Rects:</span>
+                    <input type="range" min={1} max={100} value={rects}
+                      onChange={e=>setRects(parseInt(e.target.value))} style={{ width:100, accentColor:C.amber }} />
+                    <span style={{ color:C.amber, fontFamily:"monospace", width:32 }}>{rects}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        // ── Sim Card ───────────────────────────────────────────────────────────────
+        function SimCard({ sim, onClick }) {
+          const [hov,setHov]=useState(false);
+          return (
+            <div onClick={onClick} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
+              style={{
+                background: hov ? `${sim.color}0a` : "rgba(13,27,42,.85)",
+                border:`1px solid ${hov?sim.color:C.border}`,
+                borderRadius:14, padding:28, cursor:"pointer",
+                transition:"all .3s", backdropFilter:"blur(10px)",
+                transform: hov ? "translateY(-5px)" : "none",
+                boxShadow: hov ? `0 24px 48px ${sim.color}18` : "none",
+                position:"relative", overflow:"hidden",
+              }}>
+              <div style={{ position:"absolute",top:0,right:0,width:100,height:100,
+                background:`radial-gradient(circle at top right, ${sim.color}12, transparent)`,
+                borderRadius:"0 14px 0 0", pointerEvents:"none" }} />
+              <div style={{ fontSize:38, marginBottom:18, filter:`drop-shadow(0 0 10px ${sim.color})` }}>
+                {sim.icon}
+              </div>
+              <h3 style={{ fontFamily:"'Orbitron',sans-serif", fontSize:15, fontWeight:700,
+                color:sim.color, margin:"0 0 8px" }}>{sim.name}</h3>
+              <p style={{ color:C.dim, fontSize:14, margin:"0 0 22px", lineHeight:1.65 }}>{sim.desc}</p>
+              <div style={{ display:"flex", alignItems:"center", gap:8,
+                color: hov ? sim.color : C.border,
+                fontFamily:"monospace", fontSize:12, letterSpacing:2, transition:"color .3s" }}>
+                LAUNCH →
+              </div>
+            </div>
+          );
+        }
+
+        // ── Root App ───────────────────────────────────────────────────────────────
+        const SIM_COMPONENTS = {
+          probability: ProbabilityLab,
+          geometry:    GeometryStudio,
+          functions:   FunctionGrapher,
+          statistics:  StatisticsLab,
+          calculus:    CalculusExplorer,
+        };
+
+        function App() {
+          const bgRef = useRef(null);
+          const [active, setActive] = useState(null);
+          useThreeBG(bgRef);
+          const ActiveComp = active ? SIM_COMPONENTS[active.id] : null;
+
+          return (
+            <div style={{ minHeight:"100vh", background:C.bg, color:C.text, fontFamily:"'Rajdhani',sans-serif", position:"relative", overflow:"hidden" }}>
+              <style>{`
+                @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;500;600&display=swap');
+                *{box-sizing:border-box;margin:0;padding:0;}
+                ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:#0d1b2a}
+                ::-webkit-scrollbar-thumb{background:#1a3a5c;border-radius:3px}
+                input[type=range]{appearance:none;background:#1a3a5c;height:3px;border-radius:2px;outline:none;}
+                input[type=range]::-webkit-slider-thumb{appearance:none;width:14px;height:14px;border-radius:50%;cursor:pointer;}
+              `}</style>
+
+              <canvas ref={bgRef} style={{ position:"fixed",top:0,left:0,width:"100%",height:"100%",zIndex:0,pointerEvents:"none" }} />
+
+              <div style={{ position:"relative", zIndex:1 }}>
+                <header style={{ padding:"18px 36px", display:"flex", alignItems:"center", justifyContent:"space-between",
+                  borderBottom:`1px solid ${C.border}`, backdropFilter:"blur(14px)", background:"rgba(6,11,20,.8)" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+                    {active && (
+                      <button onClick={()=>setActive(null)} style={{ background:"transparent",
+                        border:`1px solid ${C.border}`, color:C.dim, padding:"6px 14px",
+                        borderRadius:6, cursor:"pointer", fontFamily:"monospace", fontSize:13 }}>← Back</button>
+                    )}
+                    <div>
+                      <h1 style={{ fontFamily:"'Orbitron',sans-serif", fontSize:active?16:22, fontWeight:900,
+                        background:"linear-gradient(135deg,#00f5ff,#a855f7)",
+                        WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>
+                        {active ? active.name.toUpperCase() : "MATHSIM ACADEMY"}
+                      </h1>
+                      {!active && <p style={{ fontSize:12, color:C.dim, fontFamily:"monospace", marginTop:2 }}>
+                        Interactive 3D Math &amp; Statistics Simulations
+                      </p>}
+                    </div>
+                  </div>
+                  <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                    <div style={{ width:8,height:8,borderRadius:"50%",background:C.green,boxShadow:`0 0 8px ${C.green}` }} />
+                    <span style={{ color:C.dim, fontFamily:"monospace", fontSize:11, letterSpacing:1 }}>LIVE</span>
+                  </div>
+                </header>
+
+                {!active && (
+                  <main style={{ padding:"64px 40px" }}>
+                    <div style={{ textAlign:"center", marginBottom:64 }}>
+                      <div style={{ fontFamily:"monospace", fontSize:12, color:C.cyan, letterSpacing:5, marginBottom:14 }}>
+                        POWERED BY INTERACTIVE SIMULATION
+                      </div>
+                      <h2 style={{ fontFamily:"'Orbitron',sans-serif", fontSize:"clamp(22px,4vw,46px)", fontWeight:900, lineHeight:1.2, marginBottom:18 }}>
+                        Explore Mathematics<br/>
+                        <span style={{ background:"linear-gradient(135deg,#00f5ff,#a855f7)",
+                          WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>
+                          Through Simulation
+                        </span>
+                      </h2>
+                      <p style={{ color:C.dim, maxWidth:520, margin:"0 auto", lineHeight:1.75, fontSize:16 }}>
+                        Five immersive labs — probability, 3D geometry, functions, statistics, and calculus — designed for visual, hands-on learning. Inspired by PhET Interactive Simulations.
+                      </p>
+                    </div>
+
+                    <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))", gap:22, maxWidth:1200, margin:"0 auto" }}>
+                      {SIMS.map((sim,i)=>(
+                        <SimCard key={sim.id} sim={sim} onClick={()=>setActive(sim)} />
+                      ))}
+                    </div>
+
+                    <div style={{ textAlign:"center", marginTop:64, color:"#1a3a5c", fontFamily:"monospace", fontSize:12, lineHeight:2.2 }}>
+                      Inspired by PhET Interactive Simulations · University of Colorado Boulder<br/>
+                      Built with Three.js r128 · React · MathJS
+                    </div>
+                  </main>
+                )}
+
+                {active && ActiveComp && (
+                  <div style={{ height:"calc(100vh - 73px)", overflow:"auto",
+                    background:"rgba(6,11,20,.97)", backdropFilter:"blur(12px)" }}>
+                    <ActiveComp />
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        }
+
+        // Render to virtual root DOM
+        const root = ReactDOM.createRoot(document.getElementById("root"));
+        root.render(<App />);
+    </script>
+</body>
+</html>

@@ -258,7 +258,7 @@
               cone:        ()=>new THREE.ConeGeometry(a,b,36),
               torus:       ()=>new THREE.TorusGeometry(a,Math.min(b,a*.9),16,64),
               icosahedron: ()=>new THREE.IcosahedronGeometry(a,1),
-              tetrahedron: ()=>new THREE.TeddyhedronGeometry (a,0), 
+              tetrahedron: ()=>new THREE.TeddyhedronGeometry  || (()=>new THREE.TetrahedronGeometry(a,0)), 
               octahedron:  ()=>new THREE.OctahedronGeometry(a,0),
             };
             const geo=(geoMap[shape]||geoMap.cube)();

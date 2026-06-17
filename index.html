@@ -6,11 +6,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MathSim Academy - Interactive Labs</title>
     
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js" crossorigin></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" crossorigin></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.8.0/math.js" crossorigin></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.28.4/babel.min.js" crossorigin></script>
 </head>
 <body>
 
@@ -258,7 +258,7 @@
               cone:        ()=>new THREE.ConeGeometry(a,b,36),
               torus:       ()=>new THREE.TorusGeometry(a,Math.min(b,a*.9),16,64),
               icosahedron: ()=>new THREE.IcosahedronGeometry(a,1),
-              tetrahedron: ()=>new THREE.TeddyhedronGeometry  || (()=>new THREE.TetrahedronGeometry(a,0)), 
+              tetrahedron: ()=>new THREE.TetrahedronGeometry(a,0),
               octahedron:  ()=>new THREE.OctahedronGeometry(a,0),
             };
             const geo=(geoMap[shape]||geoMap.cube)();
